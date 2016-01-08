@@ -96,6 +96,10 @@ EXTRA_OECONF = "--disable-tests \
 
 EXTRA_OECONF_append_class-native = " --disable-selinux"
 
+# Automatic detection in the configure script picks up the path to
+# the native tool, therefore we must override the automatism.
+EXTRA_OECONF_append_class-target = " SYSTEMCTL=${base_bindir}/systemctl"
+
 PACKAGECONFIG ??= "${@bb.utils.contains('DISTRO_FEATURES', 'systemd', 'systemd', '', d)} \
                    ${@bb.utils.contains('DISTRO_FEATURES', 'x11', 'x11', '', d)}"
 PACKAGECONFIG_class-native = ""
