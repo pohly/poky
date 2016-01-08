@@ -24,6 +24,7 @@ import os
 os.environ["DJANGO_SETTINGS_MODULE"] = "toaster.toastermain.settings"
 
 
+import django
 from django.utils import timezone
 
 
@@ -33,14 +34,16 @@ def _configure_toaster():
     sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'toaster'))
 _configure_toaster()
 
-from toaster.orm.models import Build, Task, Recipe, Layer_Version, Layer, Target, LogMessage, HelpText
-from toaster.orm.models import Target_Image_File, BuildArtifact
-from toaster.orm.models import Variable, VariableHistory
-from toaster.orm.models import Package, Package_File, Target_Installed_Package, Target_File
-from toaster.orm.models import Task_Dependency, Package_Dependency
-from toaster.orm.models import Recipe_Dependency
+django.setup()
 
-from toaster.orm.models import Project
+from orm.models import Build, Task, Recipe, Layer_Version, Layer, Target, LogMessage, HelpText
+from orm.models import Target_Image_File, BuildArtifact
+from orm.models import Variable, VariableHistory
+from orm.models import Package, Package_File, Target_Installed_Package, Target_File
+from orm.models import Task_Dependency, Package_Dependency
+from orm.models import Recipe_Dependency
+
+from orm.models import Project
 from bldcontrol.models import BuildEnvironment, BuildRequest
 
 from bb.msg import BBLogFormatter as formatter
@@ -146,7 +149,7 @@ class ORMWrapper(object):
             prj = Project.objects.get(pk = project_id)
 
         else:                           # this build was triggered by a legacy system, or command line interactive mode
-            prj = Project.objects.get_default_project()
+            prj = Project.objects.get_or_create_default_project()
             logger.debug(1, "buildinfohelper: project is not specified, defaulting to %s" % prj)
 
 
@@ -304,12 +307,16 @@ class ORMWrapper(object):
                 break
 
 
-        # If we're in analysis mode then we are wholly responsible for the data
+        # If we're in analysis mode or if this is a custom recipe
+        # then we are wholly responsible for the data
         # and therefore we return the 'real' recipe rather than the build
         # history copy of the recipe.
         if  recipe_information['layer_version'].build is not None and \
             recipe_information['layer_version'].build.project == \
-                Project.objects.get_default_project():
+                Project.objects.get_or_create_default_project():
+            return recipe
+
+        if built_recipe is None:
             return recipe
 
         return built_recipe
@@ -346,7 +353,7 @@ class ORMWrapper(object):
         # If we're doing a command line build then associate this new layer with the
         # project to avoid it 'contaminating' toaster data
         project = None
-        if build_obj.project == Project.objects.get_default_project():
+        if build_obj.project == Project.objects.get_or_create_default_project():
             project = build_obj.project
 
         layer_version_object, _ = Layer_Version.objects.get_or_create(
@@ -700,7 +707,6 @@ class ORMWrapper(object):
     def save_build_variables(self, build_obj, vardump):
         assert isinstance(build_obj, Build)
 
-        helptext_objects = []
         for k in vardump:
             desc = vardump[k]['doc']
             if desc is None:
@@ -711,10 +717,9 @@ class ORMWrapper(object):
             if desc is None:
                 desc = ''
             if len(desc):
-                helptext_objects.append(HelpText(build=build_obj,
-                    area=HelpText.VARIABLE,
-                    key=k,
-                    text=desc))
+                HelpText.objects.get_or_create(build=build_obj,
+                                               area=HelpText.VARIABLE,
+                                               key=k, text=desc)
             if not bool(vardump[k]['func']):
                 value = vardump[k]['v']
                 if value is None:
@@ -733,8 +738,6 @@ class ORMWrapper(object):
                                 operation = vh['op']))
                 if len(varhist_objects):
                     VariableHistory.objects.bulk_create(varhist_objects)
-
-        HelpText.objects.bulk_create(helptext_objects)
 
 
 class MockEvent(object):
@@ -796,6 +799,8 @@ class BuildInfoHelper(object):
         build_info['cooker_log_path'] = build_log_path
         build_info['build_name'] = self.server.runCommand(["getVariable", "BUILDNAME"])[0]
         build_info['bitbake_version'] = self.server.runCommand(["getVariable", "BB_VERSION"])[0]
+        build_info['brbe'] = self.server.runCommand(["getVariable", "TOASTER_BRBE"])[0]
+        build_info['project'] = self.project = self.server.runCommand(["getVariable", "TOASTER_PROJECT"])[0]
 
         return build_info
 
@@ -818,44 +823,15 @@ class BuildInfoHelper(object):
         assert path.startswith("/")
         assert 'build' in self.internal_state
 
-        if self.brbe is None:
-            def _slkey_interactive(layer_version):
-                assert isinstance(layer_version, Layer_Version)
-                return len(layer_version.local_path)
+        def _slkey_interactive(layer_version):
+            assert isinstance(layer_version, Layer_Version)
+            return len(layer_version.local_path)
 
-            # Heuristics: we always match recipe to the deepest layer path in the discovered layers
-            for lvo in sorted(self.orm_wrapper.layer_version_objects, reverse=True, key=_slkey_interactive):
-                # we can match to the recipe file path
-                if path.startswith(lvo.local_path):
-                    return lvo
-
-        else:
-            br_id, be_id = self.brbe.split(":")
-            from bldcontrol.bbcontroller import getBuildEnvironmentController
-            bc = getBuildEnvironmentController(pk = be_id)
-
-            def _slkey_managed(layer_version):
-                return len(bc.getGitCloneDirectory(layer_version.giturl, layer_version.commit) + layer_version.dirpath)
-
-            # Heuristics: we match the path to where the layers have been checked out
-            for brl in sorted(BuildRequest.objects.get(pk = br_id).brlayer_set.all(), reverse = True, key = _slkey_managed):
-                localdirname = os.path.join(bc.getGitCloneDirectory(brl.giturl, brl.commit), brl.dirpath)
-                # we get a relative path, unless running in HEAD mode where the path is absolute
-                if not localdirname.startswith("/"):
-                    localdirname = os.path.join(bc.be.sourcedir, localdirname)
-                if path.startswith(localdirname):
-                    # If the build request came from toaster this field
-                    # should contain the information from the layer_version
-                    # That created this build request.
-                    if brl.layer_version:
-                        return brl.layer_version
-
-                    #logger.warn("-- managed: matched path %s with layer %s " % (path, localdirname))
-                    # we matched the BRLayer, but we need the layer_version that generated this br
-
-                    for lvo in self.orm_wrapper.layer_version_objects:
-                        if brl.name == lvo.layer.name:
-                            return lvo
+        # Heuristics: we always match recipe to the deepest layer path in the discovered layers
+        for lvo in sorted(self.orm_wrapper.layer_version_objects, reverse=True, key=_slkey_interactive):
+            # we can match to the recipe file path
+            if path.startswith(lvo.local_path):
+                return lvo
 
         #if we get here, we didn't read layers correctly; dump whatever information we have on the error log
         logger.warn("Could not match layer version for recipe path %s : %s", path, self.orm_wrapper.layer_version_objects)
@@ -890,12 +866,10 @@ class BuildInfoHelper(object):
 
     def _get_path_information(self, task_object):
         assert isinstance(task_object, Task)
-        build_stats_format = "{tmpdir}/buildstats/{target}-{machine}/{buildname}/{package}/"
+        build_stats_format = "{tmpdir}/buildstats/{buildname}/{package}/"
         build_stats_path = []
 
         for t in self.internal_state['targets']:
-            target = t.target
-            machine = self.internal_state['build'].machine
             buildname = self.internal_state['build'].build_name
             pe, pv = task_object.recipe.version.split(":",1)
             if len(pe) > 0:
@@ -903,8 +877,8 @@ class BuildInfoHelper(object):
             else:
                 package = task_object.recipe.name + "-" + pv
 
-            build_stats_path.append(build_stats_format.format(tmpdir=self.tmp_dir, target=target,
-                                                     machine=machine, buildname=buildname,
+            build_stats_path.append(build_stats_format.format(tmpdir=self.tmp_dir,
+                                                     buildname=buildname,
                                                      package=package))
 
         return build_stats_path
@@ -937,6 +911,10 @@ class BuildInfoHelper(object):
     def store_started_build(self, event, build_log_path):
         assert '_pkgs' in vars(event)
         build_information = self._get_build_information(build_log_path)
+
+        # Update brbe and project as they can be changed for every build
+        self.brbe = build_information['brbe']
+        self.project = build_information['project']
 
         build_obj = self.orm_wrapper.create_build_object(build_information, self.brbe, self.project)
 

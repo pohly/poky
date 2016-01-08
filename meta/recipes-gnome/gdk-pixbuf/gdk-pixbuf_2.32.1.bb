@@ -22,7 +22,7 @@ SRC_URI = "${GNOME_MIRROR}/${BPN}/${MAJ_VER}/${BPN}-${PV}.tar.xz \
 SRC_URI[md5sum] = "b1590189a2e89fab9f871959c168508c"
 SRC_URI[sha256sum] = "4432b74f25538c7d6bcb3ca51adabdd666168955f25812a2568dc9637697f3bc"
 
-inherit autotools pkgconfig gettext pixbufcache ptest-gnome
+inherit autotools pkgconfig gettext pixbufcache ptest-gnome upstream-version-is-even
 
 LIBV = "2.10.0"
 
@@ -56,12 +56,6 @@ FILES_${PN}-dev += " \
 	${bindir}/gdk-pixbuf-pixdata \
 	${includedir}/* \
 	${libdir}/gdk-pixbuf-2.0/${LIBV}/loaders/*.la \
-"
-
-FILES_${PN}-dbg += " \
-	${libdir}/.debug/* \
-	${libdir}/gdk-pixbuf-2.0/.debug/* \
-	${libdir}/gdk-pixbuf-2.0/${LIBV}/loaders/.debug/* \
 "
 
 PACKAGES_DYNAMIC += "^gdk-pixbuf-loader-.*"

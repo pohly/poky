@@ -18,7 +18,7 @@ PACKAGECONFIG[x11] = "--with-xft,--without-xft,${X11DEPENDS}"
 BBCLASSEXTEND = "native"
 DEPENDS_class-native = "glib-2.0-native cairo-native harfbuzz-native"
 
-inherit gnomebase gtk-doc qemu ptest-gnome
+inherit gnomebase gtk-doc qemu ptest-gnome upstream-version-is-even
 
 EXTRA_AUTORECONF = ""
 
@@ -40,7 +40,6 @@ do_compile_prepend () {
 }
 
 FILES_${PN} = "${bindir}/* ${libdir}/libpango*${SOLIBS}"
-FILES_${PN}-dbg += "${libdir}/pango/${LIBV}/modules/.debug"
 FILES_${PN}-dev += "${libdir}/pango/${LIBV}/modules/*.la"
 
 RDEPENDS_${PN}-ptest += "liberation-fonts"

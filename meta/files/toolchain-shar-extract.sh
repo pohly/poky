@@ -1,6 +1,8 @@
 #!/bin/sh
 
-[ -z "$ENVCLEANED" ] && exec /usr/bin/env -i ENVCLEANED=1 "$0" "$@"
+[ -z "$ENVCLEANED" ] && exec /usr/bin/env -i ENVCLEANED=1 HOME="$HOME" "$0" "$@"
+[ -f /etc/environment ] && . /etc/environment
+export PATH=`echo "$PATH" | sed -e 's/:\.//' -e 's/::/:/'`
 
 INST_ARCH=$(uname -m | sed -e "s/i[3-6]86/ix86/" -e "s/x86[-_]64/x86_64/")
 SDK_ARCH=$(echo @SDK_ARCH@ | sed -e "s/i[3-6]86/ix86/" -e "s/x86[-_]64/x86_64/")
@@ -171,9 +173,20 @@ echo "done"
 
 printf "Setting it up..."
 # fix environment paths
+real_env_setup_script=""
 for env_setup_script in `ls $target_sdk_dir/environment-setup-*`; do
+	if grep -q 'OECORE_NATIVE_SYSROOT=' $env_setup_script; then
+		# Handle custom env setup scripts that are only named
+		# environment-setup-* so that they have relocation
+		# applied - what we want beyond here is the main one
+		# rather than the one that simply sorts last
+		real_env_setup_script="$env_setup_script"
+	fi
 	$SUDO_EXEC sed -e "s:@SDKPATH@:$target_sdk_dir:g" -i $env_setup_script
 done
+if [ -n "$real_env_setup_script" ] ; then
+	env_setup_script="$real_env_setup_script"
+fi
 
 @SDK_POST_INSTALL_COMMAND@
 

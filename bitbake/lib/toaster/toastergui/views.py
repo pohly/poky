@@ -73,12 +73,8 @@ class MimeTypeFinder(object):
 def landing(request):
     # in build mode, we redirect to the command-line builds page
     # if there are any builds for the default (cli builds) project
-    default_project = Project.objects.get_default_project()
+    default_project = Project.objects.get_or_create_default_project()
     default_project_builds = Build.objects.filter(project = default_project)
-
-    if (not toastermain.settings.BUILD_MODE) and default_project_builds.count() > 0:
-        args = (default_project.id,)
-        return redirect(reverse('projectbuilds', args = args), permanent = False)
 
     # we only redirect to projects page if there is a user-generated project
     num_builds = Build.objects.all().count()
@@ -101,9 +97,6 @@ def _get_latest_builds(prj=None):
 
     if prj is not None:
         queryset = queryset.filter(project = prj)
-
-    if not toastermain.settings.BUILD_MODE:
-        queryset = queryset.exclude(project__is_default=False)
 
     return list(itertools.chain(
         queryset.filter(outcome=Build.IN_PROGRESS).order_by("-started_on"),
@@ -1893,10 +1886,6 @@ def managedcontextprocessor(request):
         "projects": projects,
         "non_cli_projects": projects.exclude(is_default=True),
         "DEBUG" : toastermain.settings.DEBUG,
-
-        # True if Toaster is in build mode, False otherwise
-        "BUILD_MODE": toastermain.settings.BUILD_MODE,
-
         "CUSTOM_IMAGE" : toastermain.settings.CUSTOM_IMAGE,
         "TOASTER_BRANCH": toastermain.settings.TOASTER_BRANCH,
         "TOASTER_REVISION" : toastermain.settings.TOASTER_REVISION,
@@ -1938,11 +1927,6 @@ if True:
         # that use paginators.
 
         queryset = Build.objects.all()
-
-        # if in analysis mode, exclude builds for all projects except
-        # command line builds
-        if not toastermain.settings.BUILD_MODE:
-            queryset = queryset.exclude(project__is_default=False)
 
         redirect_page = resolve(request.path_info).url_name
 
@@ -2280,16 +2264,17 @@ if True:
                 prj.bitbake_version = prj.release.bitbake_version
                 prj.save()
                 # we need to change the layers
-                for i in prj.projectlayer_set.all():
+                for project in prj.projectlayer_set.all():
                     # find and add a similarly-named layer on the new branch
                     try:
-                        lv = prj.compatible_layerversions(layer_name = i.layercommit.layer.name)[0]
-                        ProjectLayer.objects.get_or_create(project = prj, layercommit = lv)
+                        layer_versions = prj.get_all_compatible_layer_versions()
+                        layer_versions = layer_versions.filter(layer__name = project.layercommit.layer.name)
+                        ProjectLayer.objects.get_or_create(project = prj, layercommit = layer_versions.first())
                     except IndexError:
                         pass
                     finally:
                         # get rid of the old entry
-                        i.delete()
+                        project.delete()
 
             if 'machineName' in request.POST:
                 machinevar = prj.projectvariable_set.get(name="MACHINE")
@@ -2399,12 +2384,17 @@ if True:
 
             retval = []
 
-            for i in prj.projectlayer_set.all():
-                lv = prj.compatible_layerversions(release = Release.objects.get(pk=new_release_id)).filter(layer__name = i.layercommit.layer.name)
+            for project in prj.projectlayer_set.all():
+                release = Release.objects.get(pk = new_release_id)
+
+                layer_versions = prj.get_all_compatible_layer_versions()
+                layer_versions = layer_versions.filter(release = release)
+                layer_versions = layer_versions.filter(layer__name = project.layercommit.layer.name)
+
                 # there is no layer_version with the new release id,
                 # and the same name
-                if lv.count() < 1:
-                    retval.append(i)
+                if layer_versions.count() < 1:
+                    retval.append(project)
 
             return response({"error":"ok",
                              "rows" : map( _lv_to_dict(prj),
@@ -2470,10 +2460,6 @@ if True:
                 pass
             try:
                 return_data['package_classes'] = ProjectVariable.objects.get(project = prj, name = "PACKAGE_CLASSES").value,
-            except ProjectVariable.DoesNotExist:
-                pass
-            try:
-                return_data['sdk_machine'] = ProjectVariable.objects.get(project = prj, name = "SDKMACHINE").value,
             except ProjectVariable.DoesNotExist:
                 pass
 
@@ -2884,11 +2870,6 @@ if True:
             context['package_classes_defined'] = "1"
         except ProjectVariable.DoesNotExist:
             pass
-        try:
-            context['sdk_machine'] =  ProjectVariable.objects.get(project = prj, name = "SDKMACHINE").value
-            context['sdk_machine_defined'] = "1"
-        except ProjectVariable.DoesNotExist:
-            pass
 
         return context
 
@@ -3047,10 +3028,6 @@ if True:
         q_default_with_builds = Q(is_default=True) & Q(num_builds__gt=0)
         queryset_all = queryset_all.filter(Q(is_default=False) |
                                            q_default_with_builds)
-
-        # if in BUILD_MODE, exclude everything but the command line builds project
-        if not toastermain.settings.BUILD_MODE:
-            queryset_all = queryset_all.exclude(is_default=False)
 
         # boilerplate code that takes a request for an object type and returns a queryset
         # for that object type. copypasta for all needed table searches

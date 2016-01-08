@@ -111,6 +111,7 @@ SRC_URI = "cvs://anonymous@rpm5.org/cvs;tag=rpm-5_4;module=rpm \
 	   file://rpm-rpmpgp-fix.patch \
 	   file://rpm-disable-Wno-override-init.patch \
 	   file://rpm-realpath.patch \
+	   file://rpm-rpmfc.c-fix-for-N32-MIPS64.patch \
 	  "
 
 # Uncomment the following line to enable platform score debugging
@@ -223,7 +224,7 @@ CFLAGS_append = " -DRPM_VENDOR_WINDRIVER -DRPM_VENDOR_POKY -DRPM_VENDOR_OE"
 
 LDFLAGS_append_libc-uclibc = "-lrt -lpthread"
 
-PACKAGES = "${PN}-dbg ${PN} ${PN}-doc ${PN}-libs ${PN}-dev ${PN}-staticdev ${PN}-common ${PN}-build python-rpm-dbg python-rpm-staticdev python-rpm-dev python-rpm perl-module-rpm perl-module-rpm-dev ${PN}-locale"
+PACKAGES = "${PN}-dbg ${PN} ${PN}-doc ${PN}-libs ${PN}-dev ${PN}-staticdev ${PN}-common ${PN}-build python-rpm-staticdev python-rpm-dev python-rpm perl-module-rpm perl-module-rpm-dev ${PN}-locale"
 
 SOLIBS = "5.4.so"
 
@@ -256,10 +257,6 @@ FILES_${PN} =  "${bindir}/rpm \
 		${bindir}/rpm.real \
 		${bindir}/rpmconstant.real \
 		${bindir}/rpm2cpio.real \
-		"
-
-FILES_${PN}-dbg += "${libdir}/rpm/.debug \
-		${libdir}/rpm/bin/.debug \
 		"
 
 FILES_${PN}-common = "${bindir}/rpm2cpio \
@@ -353,7 +350,6 @@ RDEPENDS_${PN}-build = "file bash perl"
 
 RDEPENDS_python-rpm = "${PN}"
 
-FILES_python-rpm-dbg = "${libdir}/python*/site-packages/rpm/.debug/_*"
 FILES_python-rpm-dev = "${libdir}/python*/site-packages/rpm/*.la"
 FILES_python-rpm-staticdev = "${libdir}/python*/site-packages/rpm/*.a"
 FILES_python-rpm = "${libdir}/python*/site-packages/rpm"

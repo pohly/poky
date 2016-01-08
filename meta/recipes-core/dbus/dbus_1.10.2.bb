@@ -22,7 +22,7 @@ SRC_URI = "http://dbus.freedesktop.org/releases/dbus/dbus-${PV}.tar.gz \
 SRC_URI[md5sum] = "2428919cc77b8d0028d65ee4d5dbef31"
 SRC_URI[sha256sum] = "aef3f49595df09b0824433ee993cda748ede93693a719a831562ae1616b6bb9e"
 
-inherit useradd autotools pkgconfig gettext update-rc.d
+inherit useradd autotools pkgconfig gettext update-rc.d upstream-version-is-even
 
 INITSCRIPT_NAME = "dbus-1"
 INITSCRIPT_PARAMS = "start 02 5 3 2 . stop 20 0 1 6 ."

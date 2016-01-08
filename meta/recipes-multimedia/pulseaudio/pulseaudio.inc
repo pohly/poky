@@ -52,6 +52,7 @@ PACKAGECONFIG[jack] = "--enable-jack,--disable-jack,jack"
 # Since many embedded systems don't have non-root users, it's useful to be
 # able to use pulseaudio autospawn for root as well.
 PACKAGECONFIG[autospawn-for-root] = ",,,"
+PACKAGECONFIG[lirc] = "--enable-lirc,--disable-lirc,lirc"
 
 EXTRA_OECONF_append_arm = "${@bb.utils.contains("TUNE_FEATURES", "neon", "", " --enable-neon-opt=no", d)}"
 EXTRA_OECONF_append_armeb = "${@bb.utils.contains("TUNE_FEATURES", "neon", "", " --enable-neon-opt=no", d)}"
@@ -110,8 +111,6 @@ FILES_libpulse = "${libdir}/libpulse.so.* ${sysconfdir}/pulse/client.conf"
 FILES_libpulse-simple = "${libdir}/libpulse-simple.so.*"
 FILES_libpulse-mainloop-glib = "${libdir}/libpulse-mainloop-glib.so.*"
 
-FILES_${PN}-dbg += "${libexecdir}/pulse/.debug \
-                    ${libdir}/pulse-${PV}/modules/.debug"
 FILES_${PN}-dev += "${libdir}/pulse-${PV}/modules/*.la ${datadir}/vala ${libdir}/cmake"   
 FILES_${PN}-conf = "${sysconfdir}"
 FILES_${PN}-bin += "${sysconfdir}/default/volatiles/volatiles.04_pulse"

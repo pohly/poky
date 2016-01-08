@@ -26,6 +26,7 @@ SRC_URI = "http://www.valgrind.org/downloads/valgrind-${PV}.tar.bz2 \
            file://pass-maltivec-only-if-it-supported.patch \
            file://run-ptest \
            file://0001-valgrind-Enable-rt_sigpending-syscall-on-ppc64-linux.patch \
+           file://11_mips-link-tool.patch \
           "
 
 SRC_URI[md5sum] = "60ddae962bc79e7c95cfc4667245707f"
@@ -43,13 +44,13 @@ EXTRA_OECONF_armv7a = "--enable-tls -host=armv7-none-linux-gnueabi --without-mpi
 EXTRA_OECONF += "${@['--enable-only32bit','--enable-only64bit'][d.getVar('SITEINFO_BITS', True) != '32']}"
 EXTRA_OEMAKE = "-w"
 
+CFLAGS_append_libc-uclibc = " -D__UCLIBC__ "
+
 do_install_append () {
     install -m 644 ${B}/default.supp ${D}/${libdir}/valgrind/
 }
 
 RDEPENDS_${PN} += "perl"
-
-FILES_${PN}-dbg += "${libdir}/${PN}/*/.debug/*"
 
 # valgrind needs debug information for ld.so at runtime in order to
 # redirect functions like strlen.

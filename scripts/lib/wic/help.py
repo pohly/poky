@@ -617,7 +617,7 @@ DESCRIPTION
        This command creates a partition on the system and uses the
        following syntax:
 
-         part <mountpoint>
+         part [<mountpoint>]
 
        The <mountpoint> is where the partition will be mounted and
        must take of one of the following forms:
@@ -625,6 +625,9 @@ DESCRIPTION
          /<path>: For example: /, /usr, or /home
 
          swap: The partition will be used as swap space.
+
+       If a <mountpoint> is not specified the partition will be created
+       but will not be mounted.
 
        The following are supported 'part' options:
 
@@ -739,6 +742,12 @@ DESCRIPTION
         --append: Specifies kernel parameters. These will be added to
                   bootloader command-line - for example, the syslinux
                   APPEND or grub kernel command line.
+
+        --configfile: Specifies a user defined configuration file for
+                      the bootloader. This file must be located in the
+                      canned-wks folder or could be the full path to the
+                      file. Using this option will override any other
+                      bootloader option.
 
       Note that bootloader functionality and boot partitions are
       implemented by the various --source plugins that implement

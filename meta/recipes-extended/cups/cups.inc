@@ -12,6 +12,9 @@ SRC_URI = "http://www.cups.org/software/${PV}/${BP}-source.tar.bz2 \
            file://cups.service \
 	  "
 
+UPSTREAM_CHECK_URI = "http://www.cups.org/software.php"
+UPSTREAM_CHECK_REGEX = "cups-(?P<pver>\d+\.\d+(\.\d+)?)-source.tar"
+
 LEAD_SONAME = "libcupsdriver.so"
 
 CLEANBROKEN = "1"
@@ -105,14 +108,6 @@ FILES_${PN} += "${libdir}/cups/backend \
 FILES_${PN}-lib = "${libdir}/libcups.so.*"
 
 FILES_${PN}-libimage = "${libdir}/libcupsimage.so.*"
-
-FILES_${PN}-dbg += "${libdir}/cups/backend/.debug \
-                    ${libdir}/cups/cgi-bin/.debug \
-                    ${libdir}/cups/filter/.debug \
-                    ${libdir}/cups/monitor/.debug \
-                    ${libdir}/cups/notifier/.debug \
-                    ${libdir}/cups/daemon/.debug \
-                   "
 
 #package the html for the webgui inside the main packages (~1MB uncompressed)
 

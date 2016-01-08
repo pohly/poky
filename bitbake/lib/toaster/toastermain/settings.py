@@ -64,6 +64,7 @@ if 'sqlite' in DATABASES['default']['ENGINE']:
 
 if 'DATABASE_URL' in os.environ:
     dburl = os.environ['DATABASE_URL']
+
     if dburl.startswith('sqlite3://'):
         result = re.match('sqlite3://(.*)', dburl)
         if result is None:
@@ -78,7 +79,7 @@ if 'DATABASE_URL' in os.environ:
         }
     elif dburl.startswith('mysql://'):
         # URL must be in this form: mysql://user:pass@host:port/name
-        result = re.match(r"mysql://([^:]*):([^@]*)@([^:]*):(\d+)/([^/]*)", dburl)
+        result = re.match(r"mysql://([^:]*):([^@]*)@([^:]*):(\d*)/([^/]*)", dburl)
         if result is None:
             raise Exception("ERROR: Could not read mysql database url: %s" % dburl)
         DATABASES['default'] = {
@@ -92,9 +93,6 @@ if 'DATABASE_URL' in os.environ:
     else:
         raise Exception("FIXME: Please implement missing database url schema for url: %s" % dburl)
 
-BUILD_MODE = False
-if 'TOASTER_MANAGED' in os.environ and os.environ['TOASTER_MANAGED'] == "1":
-    BUILD_MODE = True
 
 # Allows current database settings to be exported as a DATABASE_URL environment variable value
 
@@ -279,7 +277,6 @@ INSTALLED_APPS = (
     'django.contrib.humanize',
     'bldcollector',
     'toastermain',
-    'south',
 )
 
 
