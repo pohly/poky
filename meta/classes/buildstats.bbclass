@@ -188,3 +188,19 @@ python run_buildstats () {
 addhandler run_buildstats
 run_buildstats[eventmask] = "bb.event.BuildStarted bb.event.BuildCompleted bb.build.TaskStarted bb.build.TaskSucceeded bb.build.TaskFailed"
 
+python runqueue_stats () {
+    import buildstats
+    from bb import event, runqueue
+    # We should not record any samples before the first task has started,
+    # because that's the first activity shown in the process chart.
+    # Besides, at that point we are sure that the build variables
+    # are available that we need to find the output directory.
+    init = isinstance(e, bb.runqueue.runQueueTaskStarted)
+    system_stats = buildstats.get_system_stats(d, init=init)
+    if system_stats:
+        # Ensure that we sample at important events.
+        system_stats.sample(force=isinstance(e, bb.event.BuildCompleted))
+}
+
+addhandler runqueue_stats
+runqueue_stats[eventmask] = "bb.runqueue.runQueueTaskStarted bb.event.HeartbeatEvent bb.event.BuildCompleted"
