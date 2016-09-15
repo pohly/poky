@@ -38,16 +38,17 @@ class Trace:
         self.min = None
         self.max = None
         self.headers = None
-        self.disk_stats = None
+        self.disk_stats =  []
         self.ps_stats = None
         self.taskstats = None
-        self.cpu_stats = None
+        self.cpu_stats = []
         self.cmdline = None
         self.kernel = None
         self.kernel_tree = None
         self.filename = None
         self.parent_map = None
-        self.mem_stats = None
+        self.mem_stats = []
+        self.times = [] # Always empty, but expected by draw.py when drawing system charts.
 
         if len(paths):
             parse_paths (writer, self, paths)
@@ -57,6 +58,19 @@ class Trace:
             if options.full_time:
                 self.min = min(self.start.keys())
                 self.max = max(self.end.keys())
+
+
+        # Rendering system charts depends on start and end
+        # time. Provide them where the original drawing code expects
+        # them, i.e. in proc_tree.
+        class BitbakeProcessTree:
+            def __init__(self, start_time, end_time):
+                self.start_time = start_time
+                self.end_time = end_time
+                self.duration = self.end_time - self.start_time
+        self.proc_tree = BitbakeProcessTree(min(self.start.keys()),
+                                            max(self.end.keys()))
+
 
         return
 
@@ -628,6 +642,20 @@ def _parse_cmdline_log(writer, file):
             cmdLines[pid] = values
     return cmdLines
 
+def _parse_bitbake_buildstats(writer, state, filename, file):
+    paths = filename.split("/")
+    task = paths[-1]
+    pn = paths[-2]
+    start = None
+    end = None
+    for line in file:
+        if line.startswith("Started:"):
+            start = int(float(line.split()[-1]))
+        elif line.startswith("Ended:"):
+            end = int(float(line.split()[-1]))
+    if start and end:
+        state.add_process(pn + ":" + task, start, end)
+
 def get_num_cpus(headers):
     """Get the number of CPUs from the system.cpu header property. As the
     CPU utilization graphs are relative, the number of CPUs currently makes
@@ -647,18 +675,18 @@ def get_num_cpus(headers):
 def _do_parse(writer, state, filename, file):
     writer.info("parsing '%s'" % filename)
     t1 = clock()
-    paths = filename.split("/")
-    task = paths[-1]
-    pn = paths[-2]
-    start = None
-    end = None
-    for line in file:
-        if line.startswith("Started:"):
-            start = int(float(line.split()[-1]))
-        elif line.startswith("Ended:"):
-            end = int(float(line.split()[-1]))
-    if start and end:
-        state.add_process(pn + ":" + task, start, end)
+    name = os.path.basename(filename)
+    if name == "proc_diskstats.log":
+        # TODO: populate state.headers and/or record number of CPUs
+        state.disk_stats = _parse_proc_disk_stat_log(file, get_num_cpus(state.headers))
+    elif name == "proc_stat.log":
+        state.cpu_stats = _parse_proc_stat_log(file)
+    elif name == "proc_meminfo.log":
+        state.mem_stats = _parse_proc_meminfo_log(file)
+    elif name == "cmdline2.log":
+        state.cmdline = _parse_cmdline_log(writer, file)
+    elif not filename.endswith('.log'):
+        _parse_bitbake_buildstats(writer, state, filename, file)
     t2 = clock()
     writer.info("  %s seconds" % str(t2-t1))
     return state
