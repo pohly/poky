@@ -199,8 +199,8 @@ python runqueue_stats () {
     system_stats = buildstats.get_system_stats(d, init=init)
     if system_stats:
         # Ensure that we sample at important events.
-        system_stats.sample(force=isinstance(e, bb.event.BuildCompleted))
+        system_stats.sample(e, force=isinstance(e, bb.event.BuildCompleted))
 }
 
 addhandler runqueue_stats
-runqueue_stats[eventmask] = "bb.runqueue.runQueueTaskStarted bb.event.HeartbeatEvent bb.event.BuildCompleted"
+runqueue_stats[eventmask] = "bb.runqueue.runQueueTaskStarted bb.event.HeartbeatEvent bb.event.BuildCompleted bb.event.MonitorDiskEvent"
