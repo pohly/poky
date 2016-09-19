@@ -36,6 +36,7 @@ from bb import msg, data, event
 from bb import monitordisk
 import subprocess
 import pickle
+import time
 
 bblogger = logging.getLogger("BitBake")
 logger = logging.getLogger("BitBake.RunQueue")
@@ -142,6 +143,15 @@ class RunQueueScheduler(object):
 
         self.rev_prio_map = None
 
+    def create_rev_prio_map(self):
+         """
+         Create the tid->priority mapping from self.prio_map, if not done already
+         """
+         if not self.rev_prio_map:
+            self.rev_prio_map = {}
+            for tid in self.rqdata.runtaskentries:
+                self.rev_prio_map[tid] = self.prio_map.index(tid)
+
     def next_buildable_task(self):
         """
         Return the id of the first task we find that is buildable
@@ -155,10 +165,7 @@ class RunQueueScheduler(object):
             if stamp not in self.rq.build_stamps.values():
                 return tid
 
-        if not self.rev_prio_map:
-            self.rev_prio_map = {}
-            for tid in self.rqdata.runtaskentries:
-                self.rev_prio_map[tid] = self.prio_map.index(tid)
+        self.create_rev_prio_map()
 
         best = None
         bestprio = None
@@ -173,6 +180,15 @@ class RunQueueScheduler(object):
 
         return best
 
+    def next_buildable_tasks(self):
+        """
+        Return the ids of all buildable tasks, sorted by priority (most important first)
+        """
+        self.buildable = [x for x in self.buildable if x not in self.rq.runq_running]
+        self.create_rev_prio_map()
+        return sorted([tid for tid in self.buildable if self.stamps[tid] not in self.rq.build_stamps.values()],
+                      key=lambda x: self.rev_prio_map[x])
+
     def next(self):
         """
         Return the id of the task we should build next
@@ -182,6 +198,18 @@ class RunQueueScheduler(object):
 
     def newbuilable(self, task):
         self.buildable.append(task)
+
+    def describe_task(self, taskid):
+        result = 'ID %s' % taskid
+        if self.rev_prio_map:
+            result = result + (' pri %d' % self.rev_prio_map[taskid])
+        return result
+
+    def dump_prio(self, comment):
+        bb.note('%s (most important first):\n%s' %
+                (comment,
+                 '\n'.join(['%d. %s' % (index + 1, self.describe_task(taskid)) for
+                            index, taskid in enumerate(self.prio_map)])))
 
 class RunQueueSchedulerSpeed(RunQueueScheduler):
     """
@@ -241,6 +269,174 @@ class RunQueueSchedulerCompletion(RunQueueSchedulerSpeed):
             todel.reverse()
             for idx in todel:
                 del basemap[idx]
+        self.dump_prio('completion priorities')
+
+class RunQueueSchedulerRmwork(RunQueueSchedulerSpeed):
+    """
+    A scheduler optimised to complete .bb files are quickly as possible. The
+    priority map is sorted by task weight, but then reordered so once a given
+    .bb file starts to build, it's completed as quickly as possible by
+    running all tasks related to the same .bb file one after the after.
+
+    In addition, compile and non-compile tasks can have different limits applied
+    to them: BB_NUMBER_THREADS applies to all tasks (as usual), while
+    BB_NUMBER_COMPILE_THREADS applies to compile tasks. By setting
+    BB_NUMBER_COMPILE_THREADS to the value that BB_NUMBER_THREADS normally has
+    (typically ${oe.utils.cpu_count()}) and BB_NUMBER_THREADS to some higher value,
+    one can run more of the "light-weight" tasks without overloading the machine
+    when too many "heavy-weight" tasks get started.
+
+    This works well where disk space is at a premium and classes like OE's
+    rm_work are in force.
+    """
+    name = "rmwork"
+
+    def __init__(self, runqueue, rqdata):
+        RunQueueSchedulerSpeed.__init__(self, runqueue, rqdata)
+
+        self.number_additional_tasks = int(self.rq.cfgData.getVar("BB_NUMBER_ADDITIONAL_THREADS", True) or 0)
+        # self.number_tasks is expected to be the overall limit by the rest
+        # of the code, so keep that semantic and bump it up here.
+        # TODO: fix overall semantic, see also below.
+        self.rq.number_tasks += self.number_additional_tasks
+        bb.note('BB_NUMBER_ADDITIONAL_THREADS %d BB_NUMBER_THREADS %d' % \
+                (self.number_additional_tasks, self.rq.number_tasks))
+
+        # bitbake > 1.28 - taskid itself is composed of fn and taskname
+        def get_task_info(taskid):
+            fn, taskname = taskid.rsplit(':', 1)
+            return (fn, taskname)
+        def get_task_name(taskid):
+            _, taskname = taskid.rsplit(':', 1)
+            return taskname
+        self.get_task_name = get_task_name
+
+        # Extract list of tasks for each recipe, with tasks sorted
+        # ascending from "must run first" (typically do_fetch) to
+        # "runs last" (do_rm_work). Both the speed and completion
+        # schedule prioritize tasks that must run first before the ones
+        # that run later; this is what we depend on here.
+        task_lists = {}
+        for taskid in self.prio_map:
+            fn, taskname = get_task_info(taskid)
+            task_lists.setdefault(fn, []).append(taskname)
+
+        # Now unify the different task lists. The strategy is that
+        # common tasks get skipped and new ones get inserted after the
+        # preceeding common one(s) as they are found. Because task
+        # lists should differ only by their number of tasks, but not
+        # the ordering of the common tasks, this should result in a
+        # deterministic result that is a superset of the individual
+        # task ordering.
+        all_tasks = []
+        for recipe, new_tasks in task_lists.items():
+            index = 0
+            old_task = all_tasks[index] if index < len(all_tasks) else None
+            for new_task in new_tasks:
+                if old_task == new_task:
+                    # Common task, skip it. This is the fast-path which
+                    # avoids a full search.
+                    index += 1
+                    old_task = all_tasks[index] if index < len(all_tasks) else None
+                else:
+                    try:
+                        index = all_tasks.index(new_task)
+                        # Already present, just not at the current
+                        # place. We re-synchronized by changing the
+                        # index so that it matches again. Now
+                        # move on to the next existing task.
+                        index += 1
+                        old_task = all_tasks[index] if index < len(all_tasks) else None
+                    except ValueError:
+                        # Not present. Insert before old_task, which
+                        # remains the same (but gets shifted back).
+                        # bb.note('Inserting new task %s from %s after %s at %d into %s' %
+                        #         (new_task, recipe,
+                        #          all_tasks[index - 1] if index > 0 and all_tasks else None,
+                        #          index,
+                        #          all_tasks))
+                        all_tasks.insert(index, new_task)
+                        index += 1
+        bb.note('merged task list: %s'  % all_tasks)
+
+        # Now reverse the order so that tasks that finish the work on one
+        # recipe are considered more imporant (= come first). The ordering
+        # is now so that do_rm_work[_all] is most important.
+        all_tasks.reverse()
+
+        # Group tasks of the same kind before tasks of less important
+        # kinds at the head of the queue (because earlier = lower
+        # priority number = runs earlier), while preserving the
+        # ordering by recipe. If recipe foo is more important than
+        # bar, then the goal is to work on foo's do_populate_sysroot
+        # before bar's do_populate_sysroot and on the more important
+        # tasks of foo before any of the less important tasks in any
+        # other recipe (if those other recipes are more important than
+        # foo).
+        #
+        # All of this only applies when tasks are runable. Explicit
+        # dependencies still override this ordering by priority.
+        #
+        # Here's an example why this priority re-ordering helps with
+        # minimizing disk usage. Consider a recipe foo with a higher
+        # priority than bar where foo DEPENDS on bar. Then the
+        # implicit rule (from base.bbclass) is that foo's do_configure
+        # depends on bar's do_populate_sysroot. This ensures that
+        # bar's do_populate_sysroot gets done first. Normally the
+        # tasks from foo would continue to run once that is done, and
+        # bar only gets completed and cleaned up later. By ordering
+        # bar's task after do_populate_sysroot before foo's
+        # do_configure, that problem gets avoided.
+        task_index = 0
+        # self.dump_prio('Original priorities')
+        for task in all_tasks:
+            # bb.note('Rearranging %s, task_index = %d' % (task, task_index))
+            for index in range(task_index, self.numTasks):
+                taskid = self.prio_map[index]
+                taskname = get_task_name(taskid)
+                if taskname == task:
+                    # bb.note('%d. taskid %s, taskname %s -> %d' % (index, taskid, taskname, task_index))
+                    del self.prio_map[index]
+                    self.prio_map.insert(task_index, taskid)
+                    task_index += 1
+        self.dump_prio('rmwork priorities')
+
+    def next(self):
+        """
+        Returns the best task to start next, or None when it is better to not start any.
+        """
+        if self.rq.stats.active >= self.rq.number_tasks:
+            # Nothing allowed to run.
+            return None
+        buildable = self.next_buildable_tasks()
+        if not buildable:
+            # Nothing to do.
+            return None
+        if self.rq.stats.active < self.rq.number_tasks - self.number_additional_tasks:
+            # Simple: most important task can run, regardless of what it is.
+            # bb.note('%d - picked first out of %s' % (self.rq.stats.active, buildable))
+            return buildable[0]
+        # Apply self.number_tasks to compile tasks, but allow more tasks overall
+        # if the additional ones are "lighter" tasks like do_rm_work.
+        active = [x for x in self.rq.runq_running if x not in self.rq.runq_complete]
+        active_compile = [x for x in active if self.get_task_name(x) == 'do_compile']
+        for tid in buildable:
+            if self.get_task_name(tid) == 'do_compile':
+                if len(active_compile) < self.rq.number_tasks - self.number_additional_tasks:
+                     # bb.note('%d, %d - picked compile task %s out of %s' % (len(active_compile), len(active), tid, buildable))
+                     return tid
+                else:
+                     bb.note('Skip %s, already %d compile tasks running: %s' % (tid, len(active_compile), active_compile))
+                     pass
+            else:
+                # bb.note('%d, %d - picked %s out of %s' % (len(active_compile), len(active), tid, buildable))
+                return tid
+        # Returning None here seems to trigger busy looping, because the caller does not know what
+        # to wait for. Work around that for now by sleeping.
+        # TODO: make None a valid return code of next() also in the case when there is some
+        # work left.
+        time.sleep(0.1)
+        return None
 
 class RunTaskEntry(object):
     def __init__(self):
