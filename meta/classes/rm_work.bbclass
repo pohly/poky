@@ -11,15 +11,12 @@
 # RM_WORK_EXCLUDE += "icu-native icu busybox"
 #
 
-# Use the completion scheduler by default when rm_work is active
+# Use the dedicated rmwork scheduler by default when rm_work is active
 # to try and reduce disk usage
-BB_SCHEDULER ?= "completion"
+BB_SCHEDULER ?= "rmwork"
 
 # Run the rm_work task in the idle scheduling class
 BB_TASK_IONICE_LEVEL_task-rm_work = "3.0"
-
-RMWORK_ORIG_TASK := "${BB_DEFAULT_TASK}"
-BB_DEFAULT_TASK = "rm_work_all"
 
 do_rm_work () {
     # If the recipe name is in the RM_WORK_EXCLUDE, skip the recipe.
@@ -97,13 +94,6 @@ do_rm_work () {
         rm -f $i
     done
 }
-addtask rm_work after do_${RMWORK_ORIG_TASK}
-
-do_rm_work_all () {
-    :
-}
-do_rm_work_all[recrdeptask] = "do_rm_work"
-addtask rm_work_all after do_rm_work
 
 do_populate_sdk[postfuncs] += "rm_work_populatesdk"
 rm_work_populatesdk () {
@@ -117,7 +107,7 @@ rm_work_rootfs () {
 }
 rm_work_rootfs[cleandirs] = "${WORKDIR}/rootfs"
 
-python () {
+python __anonymous_rm_work() {
     if bb.data.inherits_class('kernel', d):
         d.appendVar("RM_WORK_EXCLUDE", ' ' + d.getVar("PN", True))
     # If the recipe name is in the RM_WORK_EXCLUDE, skip the recipe.
@@ -126,4 +116,19 @@ python () {
     if pn in excludes:
         d.delVarFlag('rm_work_rootfs', 'cleandirs')
         d.delVarFlag('rm_work_populatesdk', 'cleandirs')
+    else:
+        # Inject do_rm_work into the tasks of the current recipe such that do_build
+        # depends on it and that it runs after all other tasks that block do_build,
+        # i.e. after all work on the current recipe is done. The reason for taking
+        # this approach instead of making do_rm_work depend on do_build is that
+        # do_build inherits additional runtime dependencies on
+        # other recipes and thus will typically run much later than completion of
+        # work in the recipe itself.
+        deps = bb.build.preceedtask('do_build', True, d)
+        if 'do_build' in deps:
+            deps.remove('do_build')
+        bb.build.addtask('do_rm_work', 'do_build', ' '.join(deps), d)
 }
+# Higher priority than the normal 100, and thus we run after other
+# classes like package_rpm.bbclass which also add custom tasks.
+__anonymous_rm_work[__anonprio] = "1000"
