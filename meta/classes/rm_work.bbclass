@@ -107,7 +107,7 @@ rm_work_rootfs () {
 }
 rm_work_rootfs[cleandirs] = "${WORKDIR}/rootfs"
 
-python () {
+python __anonymous_rm_work() {
     if bb.data.inherits_class('kernel', d):
         d.appendVar("RM_WORK_EXCLUDE", ' ' + d.getVar("PN", True))
     # If the recipe name is in the RM_WORK_EXCLUDE, skip the recipe.
@@ -119,19 +119,14 @@ python () {
     else:
         # Inject do_rm_work into the tasks of the current recipe such that do_build
         # depends on it and that it runs after all other tasks that block do_build,
-        # i.e. after all work on the current recipe is done. do_build inherits
-        # additional runtime dependencies on other recipes and thus will typically
-        # run later.
-        #
-        # This approach ensures that do_rm_work runs as soon as possible. The downside
-        # is the non-deterministic execution of anonymous python functions: if some
-        # other function runs after us and makes further changes to tasks, we will
-        # miss those changes. TODO: is there a better solution?
-        #
-        # TODO: is the 'deps' varflag part of the public API, i.e. can we rely upon it here?
-        deps = d.getVarFlag('do_build', 'deps', True)
-        # Packaging classes add tasks, and due to ordering we do indeed miss those
-        # tasks. INHERIT_append in local.conf did not help?
-        deps.extend(['do_package_write_rpm', 'do_package_write_ipk', 'do_package_write_deb'])
+        # i.e. after all work on the current recipe is done. The reason for taking
+        # this approach instead of making do_rm_work depend on do_build is that
+        # do_build inherits additional runtime dependencies on
+        # other recipes and thus will typically run much later than completion of
+        # work in the recipe itself.
+        deps = bb.build.preceedtask('do_build', with_rdeptasks=True, d)
         bb.build.addtask('do_rm_work', 'do_build', ' '.join(deps), d)
 }
+# Higher priority than the normal 100, and thus we run after other
+# classes like package_rpm.bbclass which also add custom tasks.
+__anonymous_rm_work[__anonprio] = "1000"
