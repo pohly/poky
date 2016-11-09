@@ -1002,6 +1002,9 @@ class DataSmart(MutableMapping):
                 for i in bb_list:
                     value = d.getVar(i, False) or ""
                     data.update({i:value})
+                    priority = d.getVarFlag(i, '__anonprio', False)
+                    if priority is not None:
+                        data.update({'%s[__anonprio]' % i: priority})
 
         data_str = str([(k, data[k]) for k in sorted(data.keys())])
         return hashlib.md5(data_str.encode("utf-8")).hexdigest()

@@ -175,8 +175,15 @@ class MethodNode(AstNode):
     def eval(self, data):
         text = '\n'.join(self.body)
         funcname = self.func_name
-        if self.func_name == "__anonymous":
-            funcname = ("__anon_%s_%s" % (self.lineno, self.filename.translate(MethodNode.tr_tbl)))
+        if self.func_name.startswith("__anonymous"):
+            if self.func_name == "__anonymous":
+                # If truly anonymous, then we have to create a unique name.
+                funcname = ("__anon_%s_%s" % (self.lineno, self.filename.translate(MethodNode.tr_tbl)))
+            else:
+                # The recipe already has a unique name. Let's use that to ensure
+                # that any flags set for that name (like __anonymous_my_func[priority] = "1000")
+                # can be found later.
+                funcname = self.func_name
             self.python = True
             text = "def %s(d):\n" % (funcname) + text
             bb.methodpool.insert_method(funcname, text, self.filename, self.lineno - len(self.body))
@@ -352,7 +359,13 @@ def finalize(fn, d, variant = None):
     bb.data.expandKeys(d)
     bb.data.update_data(d)
     code = []
-    for funcname in d.getVar("__BBANONFUNCS", False) or []:
+    # Anonymous functions with lower priority get executed first.
+    # sorted() is stable, so for entries with the same priority,
+    # execution is in the order of definition.
+    anonymous = sorted(d.getVar("__BBANONFUNCS", False) or [],
+                       key=lambda f: int(d.getVarFlag(f, '__anonprio', True) or 100))
+    d.setVar("__BBANONFUNCS", anonymous)
+    for funcname in anonymous:
         code.append("%s(d)" % funcname)
     bb.utils.better_exec("\n".join(code), {"d": d})
     bb.data.update_data(d)
