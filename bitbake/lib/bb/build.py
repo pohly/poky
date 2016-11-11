@@ -860,3 +860,16 @@ def deltask(task, d):
         if task in deps:
             deps.remove(task)
             d.setVarFlag(bbtask, 'deps', deps)
+
+def preceedtask(task, with_rdeptasks, d):
+    """
+    Returns a set of tasks in the current recipe which were specified as
+    precondition by the task itself ("after") or which listed themselves
+    as precondition ("before"). Preceeding tasks specified via the
+    "rdeptask" are included in the result only if requested.
+    """
+    preceed = set()
+    preceed.update(d.getVarFlag(task, 'deps', True) or [])
+    if with_rdeptasks:
+        preceed.update(d.getVarFlag(task, 'rdeptask', True) or [])
+    return preceed
